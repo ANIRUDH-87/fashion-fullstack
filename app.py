@@ -77,6 +77,19 @@ def create_users_table():
         )
     """)
 
+    # Orders table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_name TEXT,
+            user_email TEXT,
+            items TEXT,
+            total REAL,
+            payment_method TEXT,
+            order_time TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -228,17 +241,80 @@ def apply_coupon():
     return redirect(url_for("cart"))
 
 # ---------------- CHECKOUT ----------------
+from datetime import datetime
+
 @app.route("/checkout", methods=["GET", "POST"])
 def checkout():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
     if request.method == "POST":
+        cart = session.get("cart", {})
+        payment_method = request.form.get("payment")
+
+        # Prepare items string
+        items_list = []
+        total = 0
+
+        for product, qty in cart.items():
+            price = PRODUCT_PRICES.get(product, 0)
+            total += price * qty
+            items_list.append(f"{product} x{qty}")
+
+        items_str = ", ".join(items_list)
+
+        # Get user info
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT name, email FROM users WHERE id = ?",
+            (session["user_id"],)
+        )
+        user = cursor.fetchone()
+
+        # Save order
+        cursor.execute("""
+            INSERT INTO orders (user_name, user_email, items, total, payment_method, order_time)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            user["name"],
+            user["email"],
+            items_str,
+            total,
+            payment_method,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ))
+
+        conn.commit()
+        conn.close()
+
+        # Clear cart
         session.pop("cart", None)
         session.pop("discount", None)
+
         return render_template("success.html")
 
     return render_template("checkout.html")
+
+# ---------------- ADMIN: VIEW ORDERS ----------------
+@app.route("/admin/orders")
+def admin_orders():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_name, user_email, items, total, payment_method, order_time
+        FROM orders
+        ORDER BY id DESC
+    """)
+
+    orders = cursor.fetchall()
+    conn.close()
+
+    return render_template("admin_orders.html", orders=orders)
+
+
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
